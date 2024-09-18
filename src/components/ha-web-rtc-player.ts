@@ -12,6 +12,7 @@ import {
   handleWebRtcOffer,
   WebRtcAnswer,
   fetchWebRtcClientConfiguration,
+  closeWebRtcStream,
 } from "../data/camera";
 import type { HomeAssistant } from "../types";
 import "./ha-alert";
@@ -42,6 +43,8 @@ class HaWebRtcPlayer extends LitElement {
   @property() public posterUrl!: string;
 
   @state() private _error?: string;
+
+  @state() private _sdpSessionId?: string;
 
   // don't cache this, as we remove it on disconnects
   @query("#remote-stream") private _videoEl!: HTMLVideoElement;
@@ -140,6 +143,16 @@ class HaWebRtcPlayer extends LitElement {
       peerConnection.close();
       return;
     }
+    // Get the sdp session id for clients that need to call close
+    if (clientConfig.requires_close === true) {
+      for (const line of offer_sdp.split("\n")) {
+        if (line.split("=")[0] === "o") {
+          const sdp_origin = line.split("=")[1];
+          this._sdpSessionId = sdp_origin.split(" ")[1];
+          break;
+        }
+      }
+    }
 
     // Setup callbacks to render remote stream once media tracks are discovered.
     const remoteStream = new MediaStream();
@@ -164,7 +177,7 @@ class HaWebRtcPlayer extends LitElement {
     this._peerConnection = peerConnection;
   }
 
-  private _cleanUp() {
+  private async _cleanUp() {
     if (this._remoteStream) {
       this._remoteStream.getTracks().forEach((track) => {
         track.stop();
@@ -178,6 +191,10 @@ class HaWebRtcPlayer extends LitElement {
     if (this._peerConnection) {
       this._peerConnection.close();
       this._peerConnection = undefined;
+      if (this._sdpSessionId) {
+        await closeWebRtcStream(this.hass, this.entityid, this._sdpSessionId);
+        this._sdpSessionId = undefined;
+      }
     }
   }
 
